@@ -1,0 +1,7 @@
+mobileid.rssp.baseurl=http://prd-rssp.mobile-id.vn/rssp/v2/
+mobileid.rssp.rp.name=DAKLAK_DEMO
+mobileid.rssp.rp.user=DAKLAK_DEMO
+mobileid.rssp.rp.password=n7L23TpU
+mobileid.rssp.rp.signature=juwdJc8FpW43XxGIR4rYNMnjLaBL0gx80K7P+o+bODJBPdZ13MStoItc3JZbH57r6tm6AyZi/CO+FAA7gKe/X6pajIvUMOTy/bbdM0lrweaQJ6g0Oo7uv67Viwah8I05mfrHQ3VoO5nilJO+t2zPvpEfSjo0R0tUYAopBt/5dPpIHtc7ojXRAsfgP48BlihbGpPDWB4NtG2U2qaovXxNAbiAB6oNp59T/ha3vW0kQom63rvdI+HTdmAY7PJtX6gyoopBjPrI4qMbArbbFqDAFbRfeP9nIEp4NK2VOpsKMB0aT3DvEYgjvIU+eVdtqE5+KTT54C3Ov2r3Nib0W89Drw==
+mobileid.rssp.rp.keystore.file=file\\DAKLAK_DEMO.p12
+mobileid.rssp.rp.keystore.password=R7WPweUx

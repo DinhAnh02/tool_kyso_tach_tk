@@ -1,0 +1,23 @@
+Manifest-Version: 1.0
+Main-Class: restful.sdk.Demo.SignServer
+Class-Path: lib/aopalliance-1.0.jar lib/bcpkix-jdk15on-1.50.jar
+  
+ lib/bcpkix-jdk15on-167.jar lib/bcprov-jdk15on-1.50.jar
+  
+ lib/bcprov-jdk15on-167.jar lib/commons-codec-1.13.jar
+  
+ lib/commons-io-2.4.jar lib/gson-2.8.0.jar lib/guice-2.0.jar
+  
+ lib/itextpdf-5.5.13.jar lib/jcoreflector_net5.0-1.8.4.0.jar
+  
+ lib/lib.rssp.exsig.jar lib/lib.rssp.exsignew.jar
+  
+ lib/lib.rssp.office.jar lib/lib.rssp.openpdf.jar lib/lib.rssp.pdf.jar
+  
+ lib/lib.xmlsec-2.0.9.jar lib/ooxml-security-1.1.jar
+  
+ lib/openpdf-1.2.7.jar lib/poi-3.16.jar lib/poi-ooxml-3.16.jar
+  
+ lib/poi-ooxml-schemas-3.16.jar lib/slf4j-api-1.7.6.jar
+  
+ lib/xmlbeans-2.6.0.jar lib/xmlsec-2.0.9.jar
