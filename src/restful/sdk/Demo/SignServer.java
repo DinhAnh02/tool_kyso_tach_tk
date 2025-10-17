@@ -195,30 +195,74 @@ public class SignServer {
                     throw new IllegalStateException("Chưa đăng nhập hoặc thông tin phiên chưa đầy đủ. Vui lòng gọi API /login trước.");
                 }
 
-                // Read raw PDF data from request body
-                InputStream is = exchange.getRequestBody();
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                byte[] data = new byte[4096];
-                int nRead;
-                while ((nRead = is.read(data, 0, data.length)) != -1) {
-                    buffer.write(data, 0, nRead);
+                // Khai báo các biến để lưu thông tin ký
+                byte[] inputPdf;
+                byte[] signatureImgBytes;
+                Rectangle signatureRectangle;
+                String pageNo;
+
+                String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+
+                if (contentType != null && contentType.toLowerCase().contains("application/json")) {
+                    System.out.println("Nhan yeu cau ky so qua JSON");
+                    // Xử lý request JSON
+                    InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), "utf-8");
+                    Gson gson = new Gson();
+                    SignRequest signRequest = gson.fromJson(isr, SignRequest.class);
+
+                    if (signRequest == null || signRequest.pdfData == null || signRequest.pdfData.isEmpty()) {
+                        throw new IllegalArgumentException("Yêu cầu JSON không hợp lệ. Cần có 'pdfData' (base64).");
+                    }
+
+                    inputPdf = Base64.getDecoder().decode(signRequest.pdfData);
+
+                    // Lấy ảnh chữ ký từ request, nếu không có thì dùng ảnh mặc định
+                    if (signRequest.signatureImage != null && !signRequest.signatureImage.isEmpty()) {
+                        signatureImgBytes = Base64.getDecoder().decode(signRequest.signatureImage);
+                        System.out.println("Da load anh chu ky tu request JSON");
+                    } else {
+                        signatureImgBytes = Files.readAllBytes(Paths.get("file/img_ki_so.jpg"));
+                        System.out.println("Su dung anh chu ky mac dinh");
+                    }
+
+                    // Lấy tọa độ từ request, nếu không có thì dùng tọa độ mặc định
+                    if (signRequest.signaturePlacement != null) {
+                        SignRequest.SignaturePlacement p = signRequest.signaturePlacement;
+                        signatureRectangle = new Rectangle(p.x, p.y, p.x + p.width, p.y + p.height);
+                        pageNo = String.valueOf(p.page);
+                        System.out.println("Da lay toa do tu request JSON cho trang " + pageNo);
+                    } else {
+                        signatureRectangle = new Rectangle(100, 100, 350, 220);
+                        pageNo = "1";
+                        System.out.println("Su dung toa do mac dinh");
+                    }
+                } else {
+                    System.out.println("Nhan yeu cau ky so voi file PDF tho (khong co anh chu ky)");
+                    // Xử lý request PDF thô (giữ nguyên logic cũ)
+                    InputStream is = exchange.getRequestBody();
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    byte[] data = new byte[4096];
+                    int nRead;
+                    while ((nRead = is.read(data, 0, data.length)) != -1) {
+                        buffer.write(data, 0, nRead);
+                    }
+                    inputPdf = buffer.toByteArray();
+                    // Sử dụng các giá trị mặc định
+                    signatureImgBytes = null;
+                    signatureRectangle = new Rectangle(100, 100, 350, 220);
+                    pageNo = "1";
                 }
-                byte[] inputPdf = buffer.toByteArray();
 
                 if (inputPdf.length == 0) {
                     throw new RuntimeException("Khong nhan duoc du lieu PDF tu request");
                 }
                 System.out.println("Da nhan du lieu PDF co kich thuoc: " + inputPdf.length + " bytes");
 
-                // Load anh chu ky
-                byte[] signatureImage = Files.readAllBytes(Paths.get("file/img_ki_so.jpg"));
-                System.out.println("Da load anh chu ky co kich thuoc: " + signatureImage.length + " bytes");
-
                 // Tao doi tuong PDFSignObject
                 PDFSignObject pdfObj = new PDFSignObject();
                 pdfObj.setDocument(inputPdf);
-                pdfObj.setPageNo("1");
-                pdfObj.setRectangle(new Rectangle(100, 100, 350, 220));
+                pdfObj.setPageNo(pageNo);
+                pdfObj.setRectangle(signatureRectangle);
                 pdfObj.setFontSize(12.5f);
                 pdfObj.setReason("Ký Số");
                 pdfObj.setLocation("Ha Noi");
@@ -230,10 +274,13 @@ public class SignServer {
                 pdfObj.setDateFormat(formatter.format(now));
                 pdfObj.setSignerInformation("Ký bởi: {signby}\nLý do: {reason}\nNgày ký: {date}\nNơi ký: {location}");
 
-                SignatureImage sigImg = new SignatureImage(signatureImage);
-                sigImg.scaleToFit(150, 60);
-                sigImg.setImageAligment(ImageAligment.RIGHT_BOTTOM);
-                pdfObj.setSignatureImage(sigImg);
+                // Chỉ thêm ảnh nếu nó tồn tại (được gửi qua JSON)
+                if (signatureImgBytes != null && signatureImgBytes.length > 0) {
+                    SignatureImage sigImg = new SignatureImage(signatureImgBytes);
+                    sigImg.scaleToFit(150, 60);
+                    sigImg.setImageAligment(ImageAligment.RIGHT_BOTTOM);
+                    pdfObj.setSignatureImage(sigImg);
+                }
 
                 List<PDFSignObject> dataToBeSigns = new ArrayList<>();
                 dataToBeSigns.add(pdfObj);
@@ -312,6 +359,21 @@ public class SignServer {
             } catch (Throwable ex) {
                 Logger.getLogger(SignServer.class.getName()).log(Level.SEVERE, null, ex);
             }
+        }
+    }
+
+    // Lớp nội tĩnh để đại diện cho request ký dạng JSON
+    static class SignRequest {
+        String pdfData; // Dữ liệu PDF dưới dạng Base64
+        SignaturePlacement signaturePlacement; // Tọa độ và trang ký (tùy chọn)
+        String signatureImage; // Ảnh chữ ký dưới dạng Base64 (tùy chọn)
+
+        static class SignaturePlacement {
+            int page = 1; // Mặc định là trang 1
+            float x;
+            float y;
+            float width;
+            float height;
         }
     }
 
