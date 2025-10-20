@@ -13,6 +13,9 @@ import java.nio.file.Paths;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.text.SimpleDateFormat;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -57,6 +60,8 @@ public class SignServer {
         HttpServer server = HttpServer.create(new InetSocketAddress(8081), 0);
         server.createContext("/login", new LoginHandler());
         server.createContext("/sign", new SignHandler());
+        server.createContext("/credentials-list", new CredentialsListHandler());
+        server.createContext("/all-cert-info", new AllCertInfoHandler());
         server.createContext("/cert-info", new CertInfoHandler());
         server.setExecutor(null);
         server.start();
@@ -64,7 +69,60 @@ public class SignServer {
         System.out.println("SignServer running at:");
         System.out.println("   POST http://localhost:8081/login");
         System.out.println("   POST http://localhost:8081/sign");
+        System.out.println("   GET  http://localhost:8081/credentials-list");
+        System.out.println("   GET  http://localhost:8081/all-cert-info");
         System.out.println("   GET  http://localhost:8081/cert-info");
+    }
+
+    static class AllCertInfoHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            try {
+                if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                    return;
+                }
+
+                if (MainDemo.session == null) {
+                    throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
+                }
+
+                // Lấy danh sách credential ID trước
+                List<ICertificate> basicCertList = MainDemo.session.listCertificates();
+                List<Map<String, Object>> allCertsInfo = new ArrayList<>();
+
+                // Với mỗi credential ID, gọi API để lấy thông tin chi tiết
+                for (ICertificate basicCert : basicCertList) {
+                    String credId = basicCert.baseCredentialInfo().getCredentialID();
+                    try {
+                        // Gọi certificateInfo để lấy thông tin đầy đủ
+                        ICertificate detailedCert = MainDemo.session.certificateInfo(null, credId, "chain", true, false);
+                        if (detailedCert != null) {
+                            BaseCertificateInfo info = detailedCert.baseCredentialInfo();
+                            Map<String, Object> certMap = new HashMap<>();
+                            certMap.put("credentialID", info.getCredentialID());
+                            certMap.put("subjectDN", info.getSubjectDN());
+                            certMap.put("issuerDN", info.getIssuerDN());
+                            certMap.put("validFrom", formatDateString(info.getValidFrom()));
+                            certMap.put("validTo", formatDateString(info.getValidTo()));
+                            certMap.put("status", info.getStatus());
+                            certMap.put("statusDesc", info.getStatusDesc());
+                            allCertsInfo.add(certMap);
+                        }
+                    } catch (Exception certEx) {
+                        System.err.println("Không thể lấy thông tin chi tiết cho credentialID: " + credId + ". Lỗi: " + certEx.getMessage());
+                        // Có thể bỏ qua hoặc thêm thông tin lỗi vào response
+                    }
+                }
+
+                Gson gson = new Gson();
+                String jsonResponse = gson.toJson(allCertsInfo);
+
+                sendJsonResponse(exchange, 200, jsonResponse);
+            } catch (Exception e) {
+                handleError(e, exchange);
+            }
+        }
     }
 
     static class CertInfoHandler implements HttpHandler {
@@ -79,35 +137,72 @@ public class SignServer {
                 // This handler now provides info for the *last* user who signed,
                 // or the demo user if no one has signed yet.
                 // For a multi-user environment, you might want to change this logic.
-                if (credentialID == null || crt == null) {
+                if (MainDemo.session == null) {
                      throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
                 }
 
-                BaseCertificateInfo info = crt.baseCredentialInfo();
-                String userCert = info.getCertificates()[0];
-                Certificate userCertificate = decodeCertificate(userCert);
-                java.security.cert.X509Certificate x509 = (java.security.cert.X509Certificate) userCertificate;
+                // Lấy credentialID từ query parameter, ví dụ: /cert-info?credentialID=...
+                String query = exchange.getRequestURI().getQuery();
+                String credId = Arrays.stream(query.split("&"))
+                                      .filter(p -> p.startsWith("credentialID="))
+                                      .findFirst()
+                                      .map(p -> p.substring("credentialID=".length()))
+                                      .orElseThrow(() -> new IllegalArgumentException("Thiếu tham số 'credentialID'"));
 
-                SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
-                String json = "{"
-                        + "\"credentialId\": \"" + credentialID + "\","
-                        + "\"subject\": \"" + x509.getSubjectDN() + "\","
-                        + "\"issuer\": \"" + x509.getIssuerDN() + "\","
-                        + "\"validFrom\": \"" + sdf.format(x509.getNotBefore()) + "\","
-                        + "\"validTo\": \"" + sdf.format(x509.getNotAfter()) + "\""
-                        + "}";
+                ICertificate certificate = MainDemo.session.certificateInfo(null, credId, "chain", true, false);
+                BaseCertificateInfo info = certificate.baseCredentialInfo();
 
-                exchange.getResponseHeaders().add("Content-Type", "application/json; charset=UTF-8");
-                exchange.sendResponseHeaders(200, json.getBytes().length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(json.getBytes());
-                }
+                Map<String, Object> certMap = new HashMap<>();
+                certMap.put("credentialID", info.getCredentialID());
+                certMap.put("subjectDN", info.getSubjectDN());
+                certMap.put("issuerDN", info.getIssuerDN());
+                certMap.put("validFrom", formatDateString(info.getValidFrom()));
+                certMap.put("validTo", formatDateString(info.getValidTo()));
+                certMap.put("status", info.getStatus());
+
+                Gson gson = new Gson();
+                String jsonResponse = gson.toJson(certMap);
+                sendJsonResponse(exchange, 200, jsonResponse);
             } catch (Exception e) {
-                String msg = "{\"error\":\"" + e.getMessage() + "\"}";
-                exchange.sendResponseHeaders(500, msg.getBytes().length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(msg.getBytes());
+                handleError(e, exchange);
+            }
+        }
+    }
+
+    static class CredentialsListHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            try {
+                if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                    return;
                 }
+
+                if (MainDemo.session == null) {
+                    throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
+                }
+
+                List<ICertificate> listCert = MainDemo.session.listCertificates();
+
+                List<Map<String, Object>> certListForJson = new ArrayList<>();
+                for (ICertificate item : listCert) {
+                    BaseCertificateInfo bci = item.baseCredentialInfo();
+                    Map<String, Object> certInfo = new LinkedHashMap<>();
+                    certInfo.put("credentialID", bci.getCredentialID());
+                    certInfo.put("status", bci.getStatus());
+                    certInfo.put("statusDesc", bci.getStatusDesc());
+                    certListForJson.add(certInfo);
+                }
+
+                Gson gson = new Gson();
+                String jsonResponse = gson.toJson(certListForJson);
+
+                sendJsonResponse(exchange, 200, jsonResponse);
+            } catch (Exception e) {
+                handleError(e, exchange);
+            } catch (Throwable ex) {
+                Logger.getLogger(SignServer.class.getName()).log(Level.SEVERE, null, ex);
+                handleError(new Exception(ex), exchange);
             }
         }
     }
@@ -166,11 +261,7 @@ public class SignServer {
 
                 // Step 4: Send success response
                 String jsonResponse = "{\"status\":\"success\", \"message\":\"Đăng nhập và khởi tạo chứng thư thành công.\", \"credentialId\":\"" + credID + "\"}";
-                exchange.getResponseHeaders().add("Content-Type", "application/json; charset=UTF-8");
-                exchange.sendResponseHeaders(200, jsonResponse.getBytes("UTF-8").length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(jsonResponse.getBytes("UTF-8"));
-                }
+                sendJsonResponse(exchange, 200, jsonResponse);
                 System.out.println("== Ket thuc qua trinh dang nhap ==");
 
             } catch (Exception e) {
@@ -379,11 +470,34 @@ public class SignServer {
 
     private static void handleError(Exception e, HttpExchange exchange) throws IOException {
         e.printStackTrace();
-        String errorMessage = "{\"status\":\"error\", \"message\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        String message = (e.getMessage() == null) ? "Lỗi không xác định" : e.getMessage().replace("\"", "'");
+        String errorMessage = "{\"status\":\"error\", \"message\":\"" + message + "\"}";
+        sendJsonResponse(exchange, 500, errorMessage);
+    }
+
+    private static void sendJsonResponse(HttpExchange exchange, int statusCode, String jsonResponse) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-        exchange.sendResponseHeaders(500, errorMessage.getBytes("UTF-8").length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(errorMessage.getBytes("UTF-8"));
+        byte[] responseBytes = jsonResponse.getBytes("UTF-8");
+        exchange.sendResponseHeaders(statusCode, responseBytes.length);
+        try (OutputStream os = exchange.getResponseBody()) { os.write(responseBytes); }
+    }
+
+    private static String formatDateString(String dateString) {
+        if (dateString == null || dateString.length() != 14) {
+            return dateString; // Trả về nguyên bản nếu không đúng định dạng
+        }
+        try {
+            // Định dạng đầu vào từ SDK (yyyyMMddHHmmss) và giả định nó là UTC
+            DateTimeFormatter inputFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.of("UTC"));
+            // Định dạng đầu ra mong muốn (dd-MM-yyyy HH:mm:ss)
+            DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
+            // Múi giờ đích (UTC+7)
+            ZoneId targetZone = ZoneId.of("Asia/Ho_Chi_Minh");
+
+            ZonedDateTime utcDateTime = ZonedDateTime.parse(dateString, inputFormatter);
+            return utcDateTime.withZoneSameInstant(targetZone).format(outputFormatter);
+        } catch (Exception e) {
+            return dateString; // Trả về nguyên bản nếu có lỗi parse
         }
     }
 }
