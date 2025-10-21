@@ -25,13 +25,11 @@ public class SessionFactory implements ISessionFactory{
 
     @Override
     public IServerSession getServerSession() {
-        ServerSession serverSession = null;
         try {
-            serverSession = new ServerSession(this.prop, this.lang, this.username, this.password);
+            return new ServerSession(this.prop, this.lang, this.username, this.password);
         } catch (Exception ex) {
-            ex.printStackTrace();
+            throw new RuntimeException(ex);
         }
-        return serverSession;
     }
 
     @Override

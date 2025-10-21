@@ -290,7 +290,7 @@ public class MainDemo {
         }
     }
 
-    public static IServerSession Handshake_func(String username, String password) throws IOException {
+    public static IServerSession Handshake_func(String username, String password) throws Exception {
 
         File file = new File(PATH_TO_FILE_CONFIG);
         InputStream stream = new FileInputStream(file);
@@ -363,11 +363,13 @@ public class MainDemo {
         return signer.finalSign(temporalData, signatures);
     }
     public static void login(String username, String password) throws Exception {
-        // This method now establishes a session with the provided credentials.
-        if (session == null) {
-            Handshake_func(username, password);
-        }
-        session.login(); // Re-login if needed, or establish new session
+        // Luôn tạo một session mới để đảm bảo thông tin đăng nhập được cập nhật.
+        // Đồng thời reset lại thông tin chứng thư của người dùng cũ.
+        Handshake_func(username, password);
+        credentialID = null;
+        crt = null;
+        certChain = null;
+        sad = null;
     }
 
     public static String getFirstCredentialId() throws Exception {

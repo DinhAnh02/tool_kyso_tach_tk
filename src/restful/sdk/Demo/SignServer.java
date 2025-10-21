@@ -61,12 +61,14 @@ public class SignServer {
         server.createContext("/login", new LoginHandler());
         server.createContext("/sign", new SignHandler());
         server.createContext("/credentials-list", new CredentialsListHandler());
+        server.createContext("/select-credential", new SelectCredentialHandler());
         server.createContext("/all-cert-info", new AllCertInfoHandler());
         server.createContext("/cert-info", new CertInfoHandler());
         server.setExecutor(null);
         server.start();
 
         System.out.println("SignServer running at:");
+        System.out.println("   POST http://localhost:8081/select-credential");
         System.out.println("   POST http://localhost:8081/login");
         System.out.println("   POST http://localhost:8081/sign");
         System.out.println("   GET  http://localhost:8081/credentials-list");
@@ -231,36 +233,66 @@ public class SignServer {
                 MainDemo.login(loginRequest.username, loginRequest.password);
                 System.out.println("Đăng nhập thành công cho user: " + loginRequest.username);
 
-                // Step 2: Get credential and certificate info
-                String credID = MainDemo.getFirstCredentialId();
-                if (credID == null) {
-                    throw new RuntimeException("Không tìm thấy credential nào cho user: " + loginRequest.username);
+                // Reset lại các thông tin của phiên cũ
+                SignServer.credentialID = null;
+                SignServer.crt = null;
+                SignServer.certChain = null;
+
+                // Step 2: Store authorizeCode globally for later use
+                SignServer.authorizeCode = loginRequest.authorizeCode;
+                System.out.println("Đã lưu mã ủy quyền (authorizeCode).");
+
+                // Step 4: Send success response
+                String jsonResponse = "{\"status\":\"success\", \"message\":\"Đăng nhập thành công. Vui lòng gọi /select-credential để chọn chứng thư.\"}";
+                sendJsonResponse(exchange, 200, jsonResponse);
+                System.out.println("== Ket thuc qua trinh dang nhap ==");
+
+            } catch (Exception e) {
+                // Nếu đăng nhập thất bại, xóa session cũ để tránh sử dụng lại
+                MainDemo.session = null;
+                handleError(e, exchange);
+            }
+        }
+    }
+
+    static class SelectCredentialHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            try {
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                    return;
                 }
 
-                // Step 3: Store session state globally
-                SignServer.credentialID = credID;
-                SignServer.authorizeCode = loginRequest.authorizeCode;
-                SignServer.crt = MainDemo.getCertificate(credID);
+                if (MainDemo.session == null) {
+                    throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
+                }
+
+                InputStreamReader isr = new InputStreamReader(exchange.getRequestBody(), "utf-8");
+                Gson gson = new Gson();
+                SelectCredentialRequest selectRequest = gson.fromJson(isr, SelectCredentialRequest.class);
+
+                if (selectRequest == null || selectRequest.credentialID == null) {
+                    throw new IllegalArgumentException("Yêu cầu không hợp lệ. Cần có: credentialID.");
+                }
+
+                // Store session state globally
+                SignServer.credentialID = selectRequest.credentialID;
+                SignServer.crt = MainDemo.getCertificate(selectRequest.credentialID);
 
                 BaseCertificateInfo info = crt.baseCredentialInfo();
-                String userCert = info.getCertificates()[0];
+                String userCertBase64 = info.getCertificates()[0];
 
-                Certificate userCertificate = decodeCertificate(userCert);
-                if (userCertificate == null) {
-                    throw new RuntimeException("User certificate null hoặc decode thất bại!");
-                }
+                Certificate userCertificate = decodeCertificate(userCertBase64);
+                if (userCertificate == null) throw new RuntimeException("User certificate null hoặc decode thất bại!");
 
                 SignServer.certChain = new ArrayList<>();
                 SignServer.certChain.add(userCertificate);
-                Certificate caCert = decodeCertificate(cert_CA);
-                if (caCert != null) SignServer.certChain.add(caCert);
-                Certificate rootCert = decodeCertificate(cert_Root);
-                if (rootCert != null) SignServer.certChain.add(rootCert);
+                // Các chứng thư CA và Root sẽ được thêm nếu được cấu hình
 
-                System.out.println("Đã lấy và lưu thông tin chứng thư cho credentialID: " + credID);
+                System.out.println("Đã chọn và khởi tạo chứng thư cho credentialID: " + selectRequest.credentialID);
 
-                // Step 4: Send success response
-                String jsonResponse = "{\"status\":\"success\", \"message\":\"Đăng nhập và khởi tạo chứng thư thành công.\", \"credentialId\":\"" + credID + "\"}";
+                String jsonResponse = "{\"status\":\"success\", \"message\":\"Đã chọn chứng thư thành công.\", \"credentialId\":\"" + selectRequest.credentialID + "\"}";
                 sendJsonResponse(exchange, 200, jsonResponse);
                 System.out.println("== Ket thuc qua trinh dang nhap ==");
 

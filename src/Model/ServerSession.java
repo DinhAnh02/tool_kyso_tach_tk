@@ -83,18 +83,13 @@ public class ServerSession implements IServerSession {
 
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
             refreshToken = null;
-            if (retryLogin >= 5) {
-                retryLogin = 0;
-                System.out.println("Response code: " + signCloudResp.error);
-                System.out.println("Response Desscription: " + signCloudResp.errorDescription);
-                System.out.println("Response ID: " + signCloudResp.responseID);
-                System.out.println("AccessToken: " + signCloudResp.accessToken);
+            if (retryLogin >= 5) { // Giới hạn số lần thử lại
+                throw new Exception("Đăng nhập lại thất bại sau " + retryLogin + " lần. Lỗi: " + signCloudResp.errorDescription);
             }
             login();
         } else if (signCloudResp.error != 0) {
-            System.out.println("Err code: " + signCloudResp.error);
-            System.out.println("Err Desscription: " + signCloudResp.errorDescription);
-            System.out.println("Response ID: " + signCloudResp.responseID);
+            // Ném ra exception khi đăng nhập thất bại để ngăn vòng lặp vô hạn
+            throw new APIException(signCloudResp.error, signCloudResp.errorDescription);
         } else {
             this.bearer = "Bearer " + signCloudResp.accessToken;
 
@@ -105,8 +100,24 @@ public class ServerSession implements IServerSession {
                 System.out.println("Response ID: " + signCloudResp.responseID);
                 System.out.println("AccessToken: " + signCloudResp.accessToken);
             }
+            retryLogin = 0; // Reset bộ đếm khi đăng nhập thành công
         }
     }
+
+    private void handleTokenExpiration(Runnable afterLoginSuccess) throws Exception {
+        try {
+            login();
+            // Nếu login() thành công, thực thi hành động tiếp theo
+            afterLoginSuccess.run();
+        } catch (APIException apiEx) {
+            // Nếu login() thất bại, ném lại lỗi để ngăn vòng lặp
+            throw apiEx;
+        } catch (Exception e) {
+            // Bắt các lỗi khác từ login()
+            throw new Exception("Lỗi không xác định trong quá trình đăng nhập lại: " + e.getMessage(), e);
+        }
+    }
+
 
     @Override
     public ICertificate certificateInfo(String credentialID) throws Exception {
@@ -140,11 +151,10 @@ public class ServerSession implements IServerSession {
 
         CredentialInfoResponse signCloudResp = Utils.gsTmp.fromJson(response.getMsg(), CredentialInfoResponse.class);
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
-            login();
-            return certificateInfo(agreementUUID, credentialID, certificate, certInfoEnabled, authInfoEnabled);
+            // Gọi lại chính nó sau khi đăng nhập lại thành công
+            handleTokenExpiration(() -> {});
+            return certificateInfo(agreementUUID, credentialID, certificate, certInfoEnabled, authInfoEnabled); // Thử lại sau khi login
         } else if (signCloudResp.error != 0) {
-            //System.out.println("Err code: " + signCloudResp.error);
-            //System.out.println("Err Desscription: " + signCloudResp.errorDescription);
             throw new APIException(signCloudResp.error, signCloudResp.errorDescription);
         }
         System.out.println("err code: " + signCloudResp.error);
@@ -193,8 +203,9 @@ public class ServerSession implements IServerSession {
         }
         AuthorizeResponse signCloudResp = Utils.gsTmp.fromJson(response.getMsg(), AuthorizeResponse.class);
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
-            login();
-            return authorize(agreementUUID, credentialID, numSignatures, doc, signAlgo, otpRequestID, otp);
+            // Gọi lại chính nó sau khi đăng nhập lại thành công
+            handleTokenExpiration(() -> {});
+            return authorize(agreementUUID, credentialID, numSignatures, doc, signAlgo, otpRequestID, otp); // Thử lại sau khi login
         } else if (signCloudResp.error != 0) {
             System.out.println("Err code: " + signCloudResp.error);
             System.out.println("Err Desscription: " + signCloudResp.errorDescription);
@@ -241,12 +252,9 @@ public class ServerSession implements IServerSession {
         }
         AuthorizeResponse signCloudResp = Utils.gsTmp.fromJson(response.getMsg(), AuthorizeResponse.class);
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
-            try {
-                login();
-            } catch (Exception ex) {
-                Logger.getLogger(ServerSession.class.getName()).log(Level.SEVERE, null, ex);
-            }
-            return authorize(agreementUUID, credentialID, numSignatures, doc, signAlgo, displayTemplate);
+            // Gọi lại chính nó sau khi đăng nhập lại thành công
+            handleTokenExpiration(() -> {});
+            return authorize(agreementUUID, credentialID, numSignatures, doc, signAlgo, displayTemplate); // Thử lại sau khi login
         } else if (signCloudResp.error != 0) {
             System.out.println("err code: " + signCloudResp.error);
             System.out.println("error description: " + signCloudResp.errorDescription);
@@ -277,8 +285,9 @@ public class ServerSession implements IServerSession {
 
         SignHashResponse signCloudResp = Utils.gsTmp.fromJson(response.getMsg(), SignHashResponse.class);
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
-            login();
-            return signHash(agreementUUID, credentialID, documentDigest, signAlgo, SAD);
+            // Gọi lại chính nó sau khi đăng nhập lại thành công
+            handleTokenExpiration(() -> {});
+            return signHash(agreementUUID, credentialID, documentDigest, signAlgo, SAD); // Thử lại sau khi login
         } else if (signCloudResp.error != 0) {
             System.out.println("Err code: " + signCloudResp.error);
             System.out.println("Err Desscription: " + signCloudResp.errorDescription);
@@ -321,8 +330,9 @@ public class ServerSession implements IServerSession {
 
         CredentialListResponse signCloudResp = Utils.gsTmp.fromJson(response.getMsg(), CredentialListResponse.class);
         if (signCloudResp.error == 3005 || signCloudResp.error == 3006) {
-            login();
-            return listCertificates(agreementUUID, certificate, certInfoEnabled, authInfoEnabled, conditions);
+            // Gọi lại chính nó sau khi đăng nhập lại thành công
+            handleTokenExpiration(() -> {});
+            return listCertificates(agreementUUID, certificate, certInfoEnabled, authInfoEnabled, conditions); // Thử lại sau khi login
         } else if (signCloudResp.error != 0) {
             throw new APIException(signCloudResp.error, signCloudResp.errorDescription);
         }
