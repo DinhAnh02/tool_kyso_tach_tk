@@ -136,31 +136,25 @@ public class SignServer {
                     return;
                 }
 
-                // This handler now provides info for the *last* user who signed,
-                // or the demo user if no one has signed yet.
-                // For a multi-user environment, you might want to change this logic.
-                if (MainDemo.session == null) {
-                     throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
+                if (MainDemo.session == null || SignServer.credentialID == null || SignServer.crt == null) {
+                    throw new IllegalStateException("Chưa đăng nhập hoặc chưa chọn chứng thư. Vui lòng gọi API /login và /select-credential trước.");
                 }
 
-                // Lấy credentialID từ query parameter, ví dụ: /cert-info?credentialID=...
-                String query = exchange.getRequestURI().getQuery();
-                String credId = Arrays.stream(query.split("&"))
-                                      .filter(p -> p.startsWith("credentialID="))
-                                      .findFirst()
-                                      .map(p -> p.substring("credentialID=".length()))
-                                      .orElseThrow(() -> new IllegalArgumentException("Thiếu tham số 'credentialID'"));
+                // Lấy credentialID đã được chọn
+                String selectedCredentialID = SignServer.credentialID;
 
-                ICertificate certificate = MainDemo.session.certificateInfo(null, credId, "chain", true, false);
-                BaseCertificateInfo info = certificate.baseCredentialInfo();
+                // Gọi lại API để lấy thông tin chi tiết đầy đủ cho chứng thư đã chọn
+                ICertificate detailedCert = MainDemo.session.certificateInfo(null, selectedCredentialID, "chain", true, false);
+                BaseCertificateInfo info = detailedCert.baseCredentialInfo();
 
-                Map<String, Object> certMap = new HashMap<>();
+                Map<String, Object> certMap = new LinkedHashMap<>();
                 certMap.put("credentialID", info.getCredentialID());
                 certMap.put("subjectDN", info.getSubjectDN());
                 certMap.put("issuerDN", info.getIssuerDN());
                 certMap.put("validFrom", formatDateString(info.getValidFrom()));
                 certMap.put("validTo", formatDateString(info.getValidTo()));
                 certMap.put("status", info.getStatus());
+                certMap.put("statusDesc", info.getStatusDesc());
 
                 Gson gson = new Gson();
                 String jsonResponse = gson.toJson(certMap);
@@ -184,16 +178,29 @@ public class SignServer {
                     throw new IllegalStateException("Chưa có người dùng nào đăng nhập. Vui lòng gọi API /login trước.");
                 }
 
-                List<ICertificate> listCert = MainDemo.session.listCertificates();
+                // Lấy danh sách chứng thư với thông tin cơ bản
+                List<ICertificate> basicCertList = MainDemo.session.listCertificates();
 
                 List<Map<String, Object>> certListForJson = new ArrayList<>();
-                for (ICertificate item : listCert) {
-                    BaseCertificateInfo bci = item.baseCredentialInfo();
-                    Map<String, Object> certInfo = new LinkedHashMap<>();
-                    certInfo.put("credentialID", bci.getCredentialID());
-                    certInfo.put("status", bci.getStatus());
-                    certInfo.put("statusDesc", bci.getStatusDesc());
-                    certListForJson.add(certInfo);
+                // Với mỗi chứng thư, gọi lại API để lấy thông tin chi tiết
+                for (ICertificate basicCert : basicCertList) {
+                    String credId = basicCert.baseCredentialInfo().getCredentialID();
+                    try {
+                        // Gọi certificateInfo để lấy thông tin đầy đủ
+                        ICertificate detailedCert = MainDemo.session.certificateInfo(null, credId, "chain", true, false);
+                        BaseCertificateInfo info = detailedCert.baseCredentialInfo();
+                        Map<String, Object> certMap = new LinkedHashMap<>();
+                        certMap.put("credentialID", info.getCredentialID());
+                        certMap.put("subjectDN", info.getSubjectDN());
+                        certMap.put("issuerDN", info.getIssuerDN());
+                        certMap.put("validFrom", formatDateString(info.getValidFrom()));
+                        certMap.put("validTo", formatDateString(info.getValidTo()));
+                        certMap.put("status", info.getStatus());
+                        certMap.put("statusDesc", info.getStatusDesc());
+                        certListForJson.add(certMap);
+                    } catch (Exception certEx) {
+                        System.err.println("Không thể lấy thông tin chi tiết cho credentialID: " + credId + ". Lỗi: " + certEx.getMessage());
+                    }
                 }
 
                 Gson gson = new Gson();
@@ -279,6 +286,14 @@ public class SignServer {
                 // Store session state globally
                 SignServer.credentialID = selectRequest.credentialID;
                 SignServer.crt = MainDemo.getCertificate(selectRequest.credentialID);
+
+                // Kiểm tra trạng thái của chứng thư ngay sau khi chọn
+                BaseCertificateInfo certInfo = SignServer.crt.baseCredentialInfo();
+                String status = certInfo.getStatus();
+                // Chấp nhận cả "OPERATIVE" và "OPERATED" là trạng thái hoạt động
+                if (!("OPERATIVE".equalsIgnoreCase(status) || "OPERATED".equalsIgnoreCase(status))) {
+                    throw new IllegalStateException("Chứng thư không hợp lệ hoặc đã hết hạn. Trạng thái: " + certInfo.getStatusDesc() + " (" + status + ")");
+                }
 
                 BaseCertificateInfo info = crt.baseCredentialInfo();
                 String userCertBase64 = info.getCertificates()[0];
